@@ -1,47 +1,35 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-import time
+from playwright.sync_api import sync_playwright
 
 app = FastAPI()
 
 @app.get("/craft")
 def get_craft(name: str = Query(..., description="Название предмета")):
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-    driver = webdriver.Chrome(options=chrome_options)
+        try:
+            page.goto("https://minecraft-inside.ru/crafting/")
+            page.fill("#search", name)
+            page.wait_for_timeout(2000)
 
-    try:
-        driver.get("https://minecraft-inside.ru/crafting/")
-        search_box = driver.find_element(By.ID, "search")
-        search_box.clear()
-        search_box.send_keys(name)
-        time.sleep(2)
+            page.click(".item-block")
+            page.wait_for_timeout(2000)
 
-        first_result = driver.find_element(By.CLASS_NAME, "item-block")
-        first_result.click()
-        time.sleep(2)
+            title = page.text_content("div.content h1")
+            image = page.get_attribute("div.recipe img", "src")
+            mats = [el.inner_text() for el in page.query_selector_all(".recipe-items li")]
 
-        title = driver.find_element(By.CSS_SELECTOR, "div.content h1").text
-        image = driver.find_element(By.CSS_SELECTOR, "div.recipe img").get_attribute("src")
-        materials = driver.find_elements(By.CSS_SELECTOR, "div.recipe-items li")
+            return JSONResponse({
+                "title": title,
+                "image": image,
+                "materials": mats
+            })
 
-        mats = []
-        for item in materials:
-            mats.append(item.text)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
-        return JSONResponse({
-            "title": title,
-            "image": image,
-            "materials": mats
-        })
-
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-    finally:
-        driver.quit()
+        finally:
+            browser.close()
